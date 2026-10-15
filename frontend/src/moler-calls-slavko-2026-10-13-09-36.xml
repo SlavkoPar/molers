@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<calls export="19" exportedAt="2026-10-13T07:36:48.817Z" exportedBy="slavko" count="1">
+  <call>
+    <workSpace>AutoPlace</workSpace>
+    <calledAt>2026-10-08T13:53:15.059Z</calledAt>
+    <phone>+381648319424</phone>
+    <name>Zoki Nelt</name>
+    <address/>
+    <comment/>
+    <price/>
+    <callType>incoming</callType>
+    <durationSeconds>19</durationSeconds>
+    <location>Serbia</location>
+    <numberLabel>Mobile</numberLabel>
+    <countryIso>RS</countryIso>
+    <isVideo>false</isVideo>
+    <voiceMessageMs>4200</voiceMessageMs>
+    <voiceMessage mimeType="audio/mp4">BASE64...</voiceMessage>
+    <transcript/>
+  </call>
+</calls>

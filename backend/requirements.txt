@@ -4,3 +4,6 @@ gunicorn>=23.0
 google-auth>=2.30
 requests>=2.32
 python-dotenv>=1.0
+defusedxml>=0.7
+imageio-ffmpeg>=0.5
+truststore>=0.10

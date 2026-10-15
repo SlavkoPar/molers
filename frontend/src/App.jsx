@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { readJson } from "./api.js";
+import ProfileMenu from "./ProfileMenu.jsx";
+import Calls from "./Calls.jsx";
+import WorkspaceForm from "./WorkspaceForm.jsx";
+import "./App.css";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -22,11 +27,12 @@ function GoogleSignIn({ onSignedIn }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ credential }),
           });
+          const data = await readJson(res);
           if (!res.ok) {
-            setError("Sign-in failed");
+            setError(data.error || "Sign-in failed");
             return;
           }
-          onSignedIn((await res.json()).user);
+          onSignedIn(data);
         },
       });
       window.google.accounts.id.renderButton(buttonRef.current, {
@@ -47,20 +53,51 @@ function GoogleSignIn({ onSignedIn }) {
   );
 }
 
+function getInitialTheme() {
+  try {
+    const saved = localStorage.getItem("theme");
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    // ignore
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
 export default function App() {
   const [message, setMessage] = useState("Loading...");
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
+  const [theme, setTheme] = useState(getInitialTheme);
+  const [workspace, setWorkspace] = useState(null);
+  const [editingWorkspace, setEditingWorkspace] = useState(false);
+
+  const handleSignedIn = useCallback((data) => {
+    setUser(data.user);
+    setWorkspace(data.workspace);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("theme", theme);
+    } catch {
+      // storage unavailable; theme just won't persist
+    }
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
   useEffect(() => {
     fetch("/api/hello")
-      .then((res) => res.json())
-      .then((data) => setMessage(data.message))
+      .then(readJson)
+      .then((data) => setMessage(data.message ?? data.error))
       .catch((err) => setMessage(`Error: ${err.message}`));
 
     fetch("/api/auth/me")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => setUser(data?.user ?? null))
+      .then((res) => (res.ok ? readJson(res) : null))
+      .then((data) => data && handleSignedIn(data))
       .finally(() => setChecking(false));
   }, []);
 
@@ -68,19 +105,45 @@ export default function App() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.google?.accounts.id.disableAutoSelect();
     setUser(null);
+    setWorkspace(null);
+    setEditingWorkspace(false);
   };
 
+  const needsWorkspace = user && !workspace;
+
   return (
-    <main>
-      <h1>{message}</h1>
-      {checking ? null : user ? (
-        <p>
-          Signed in as {user.name} ({user.email}){" "}
-          <button onClick={logout}>Sign out</button>
-        </p>
-      ) : (
-        <GoogleSignIn onSignedIn={setUser} />
-      )}
-    </main>
+    <>
+      <header className="topbar">
+        {user && (
+          <ProfileMenu
+            user={user}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            onSignOut={logout}
+            onEditWorkspace={
+              workspace?.isOwner ? () => setEditingWorkspace(true) : undefined
+            }
+          />
+        )}
+      </header>
+      <main>
+        {needsWorkspace || editingWorkspace ? (
+          <WorkspaceForm
+            workspace={workspace}
+            onSaved={(ws) => {
+              setWorkspace(ws);
+              setEditingWorkspace(false);
+            }}
+            onCancel={needsWorkspace ? undefined : () => setEditingWorkspace(false)}
+          />
+        ) : (
+          <>
+            <h1>{message}</h1>
+            {user && workspace && <Calls workspaceName={workspace.name} />}
+          </>
+        )}
+        {!checking && !user && <GoogleSignIn onSignedIn={handleSignedIn} />}
+      </main>
+    </>
   );
 }

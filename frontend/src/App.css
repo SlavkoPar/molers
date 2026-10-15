@@ -1,0 +1,396 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #656d76;
+  --surface: #ffffff;
+  --border: #d0d7de;
+  --hover: #f3f4f6;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1117;
+  --fg: #e6edf3;
+  --muted: #8d96a0;
+  --surface: #161b22;
+  --border: #30363d;
+  --hover: #21262d;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 56px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+main {
+  padding: 16px;
+}
+
+.workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+}
+
+.workspace-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.workspace-form input,
+.workspace-form textarea {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 400;
+}
+
+.workspace-form small {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.workspace-form .error {
+  margin: 0;
+  color: #d1242f;
+}
+
+.workspace-form select {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 400;
+}
+
+.workspace-form .success {
+  margin: 0;
+  color: #1a7f37;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.workspace-form label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  font-weight: 400;
+}
+
+.recorder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.recorder button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.recorder .mic-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 400;
+}
+
+.recorder .mic-select select {
+  max-width: 100%;
+}
+
+.recorder .level {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.recorder audio {
+  display: block;
+  margin: 8px 0 4px;
+  max-width: 100%;
+}
+
+.rec-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d1242f;
+  animation: rec-pulse 1s infinite;
+}
+
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.form-actions button {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.form-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: #d1242f;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tabs button,
+.back,
+.pager button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tabs button[aria-current="page"] {
+  background: var(--hover);
+  font-weight: 600;
+}
+
+.pager button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.search {
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.call-list table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.call-list th,
+.call-list td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.call-list th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85em;
+}
+
+.call-list td small {
+  display: block;
+  color: var(--muted);
+}
+
+.call-list tbody tr {
+  cursor: pointer;
+}
+
+.call-list tbody tr:hover,
+.call-list tbody tr:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.pager .muted {
+  margin-right: auto;
+}
+
+.back {
+  margin-bottom: 16px;
+}
+
+.call-detail {
+  max-width: 560px;
+}
+
+.call-detail dl {
+  margin: 0 0 24px;
+}
+
+.call-detail dl > div {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.call-detail dt {
+  color: var(--muted);
+}
+
+.call-detail dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.call-detail audio {
+  display: block;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.call-detail .transcript p {
+  white-space: pre-wrap;
+}
+
+.call-detail .transcript button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.call-detail .transcript button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.profile {
+  position: relative;
+}
+
+.profile-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--hover);
+  color: var(--fg);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.profile-button img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.profile-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 220px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.profile-info {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.profile-info small {
+  color: var(--muted);
+}
+
+.profile-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.profile-menu button:hover {
+  background: var(--hover);
+}
