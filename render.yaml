@@ -1,0 +1,40 @@
+# Render Blueprint: one web service that serves the API and the built React app.
+# Create it with  New + > Blueprint  and pick this repository.
+services:
+  - type: web
+    name: molers
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # A persistent disk needs a paid instance. Without one, the SQLite database is
+    # wiped on every deploy and restart.
+    plan: starter
+    healthCheckPath: /api/hello
+    autoDeploy: true
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PRODUCTION
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /var/data/my.db
+      # Google sign-in. The same client ID is used by the server and baked into the frontend.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: VITE_GOOGLE_CLIENT_ID
+        sync: false
+      # Lets phones and scripts post calls without signing in (header X-API-Key).
+      - key: API_KEY
+        sync: false
+      # Speech-to-text for voice messages.
+      - key: SPEECH_SERVER_URL
+        value: https://moler.expo.app
+      - key: SPEECH_SERVER_TOKEN
+        sync: false
+      - key: SPEECH_LANGUAGE
+        value: sr-RS
+      - key: TRANSCRIBE_BACKLOG_ON_START
+        value: "1"

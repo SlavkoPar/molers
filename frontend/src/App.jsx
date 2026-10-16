@@ -89,12 +89,16 @@ export default function App() {
 
   const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
 
+  // the greeting names the signed-in user, so ask again whenever the user changes
+  const userId = user?.id;
   useEffect(() => {
     fetch("/api/hello")
       .then(readJson)
       .then((data) => setMessage(data.message ?? data.error))
       .catch((err) => setMessage(`Error: ${err.message}`));
+  }, [userId]);
 
+  useEffect(() => {
     fetch("/api/auth/me")
       .then((res) => (res.ok ? readJson(res) : null))
       .then((data) => data && handleSignedIn(data))
@@ -139,7 +143,7 @@ export default function App() {
         ) : (
           <>
             <h1>{message}</h1>
-            {user && workspace && <Calls workspaceName={workspace.name} />}
+            {user && workspace && <Calls workspaceName={workspace.name} isOwner={workspace.isOwner} />}
           </>
         )}
         {!checking && !user && <GoogleSignIn onSignedIn={handleSignedIn} />}

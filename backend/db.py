@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS exports (
 CREATE TABLE IF NOT EXISTS phone_calls (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id      INTEGER REFERENCES workspaces(id),
+    created_by        TEXT REFERENCES users(id),
     person_id         INTEGER NOT NULL REFERENCES persons(id),
     phone             TEXT NOT NULL,
     name              TEXT NOT NULL DEFAULT '',
@@ -89,6 +90,12 @@ def _migrate(conn):
     if "workspace_id" not in _columns(conn, "phone_calls"):
         conn.execute(
             "ALTER TABLE phone_calls ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)"
+        )
+
+    if "created_by" not in _columns(conn, "phone_calls"):
+        # calls stored before this stay NULL, so only the workspace owner sees them
+        conn.execute(
+            "ALTER TABLE phone_calls ADD COLUMN created_by TEXT REFERENCES users(id)"
         )
 
     if "workspace_id" not in _columns(conn, "persons"):
@@ -247,7 +254,7 @@ def find_workspace_ids_by_name(name):
         ]
 
 
-def _insert_call(conn, call, workspace_id):
+def _insert_call(conn, call, workspace_id, created_by):
     """Store one call as (status, call_id); status is inserted, updated or skipped.
 
     A call already stored is skipped, except that a voice message it was missing
@@ -284,13 +291,14 @@ def _insert_call(conn, call, workspace_id):
     call_id = conn.execute(
         """
         INSERT INTO phone_calls (
-            workspace_id, person_id, phone, name, address, called_at, comment, price_cents,
-            call_type, duration_seconds, location, number_label, country_iso,
+            workspace_id, created_by, person_id, phone, name, address, called_at, comment,
+            price_cents, call_type, duration_seconds, location, number_label, country_iso,
             is_video, has_voice, voice_duration_ms, transcript
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             workspace_id,
+            created_by,
             person_id,
             call["phone"],
             call["name"],
@@ -327,7 +335,7 @@ def get_voice(call_id):
     with connect() as conn:
         row = conn.execute(
             """
-            SELECT c.workspace_id, v.data, v.mime_type
+            SELECT c.workspace_id, c.created_by, v.data, v.mime_type
             FROM voice_messages v JOIN phone_calls c ON c.id = v.call_id
             WHERE v.call_id = ?
             """,
@@ -337,13 +345,14 @@ def get_voice(call_id):
         return None
     return {
         "workspaceId": row["workspace_id"],
+        "createdBy": row["created_by"],
         "data": bytes(row["data"]),
         "mimeType": row["mime_type"],
     }
 
 
 CALL_SELECT = """
-    SELECT id, workspace_id, person_id, phone, name, address, called_at, comment,
+    SELECT id, workspace_id, created_by, person_id, phone, name, address, called_at, comment,
            price_cents, call_type, duration_seconds, location, number_label,
            country_iso, is_video, has_voice, voice_duration_ms, transcript, export_id
     FROM phone_calls
@@ -355,6 +364,7 @@ def _call_dict(r):
     return {
         "id": r["id"],
         "workspaceId": r["workspace_id"],
+        "createdBy": r["created_by"],
         "personId": r["person_id"],
         "phone": r["phone"],
         "name": r["name"],
@@ -375,10 +385,16 @@ def _call_dict(r):
     }
 
 
-def list_calls(workspace_id, query="", limit=25, offset=0):
-    """Newest calls first. Returns (calls, total) where total ignores limit/offset."""
+def list_calls(workspace_id, query="", limit=25, offset=0, only_created_by=None):
+    """Newest calls first. Returns (calls, total) where total ignores limit/offset.
+
+    only_created_by limits the list to calls entered by that user.
+    """
     where = "workspace_id = ?"
     params = [workspace_id]
+    if only_created_by is not None:
+        where += " AND created_by = ?"
+        params.append(only_created_by)
     if query:
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         like = f"%{escaped}%"
@@ -396,6 +412,50 @@ def list_calls(workspace_id, query="", limit=25, offset=0):
             [*params, limit, offset],
         ).fetchall()
     return [_call_dict(r) for r in rows], total
+
+
+def report_calls(workspace_id, only_created_by=None, start=None, end=None, limit=5000):
+    """Slim call rows with the author's name, newest first, for reports.
+
+    start is inclusive and end exclusive (ISO timestamps). Returns (rows, truncated).
+    """
+    where = "c.workspace_id = ?"
+    params = [workspace_id]
+    if only_created_by is not None:
+        where += " AND c.created_by = ?"
+        params.append(only_created_by)
+    if start:
+        where += " AND c.called_at >= ?"
+        params.append(start)
+    if end:
+        where += " AND c.called_at < ?"
+        params.append(end)
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT c.id, c.called_at, c.phone, c.name, c.call_type, c.duration_seconds,
+                   c.price_cents, c.created_by, u.name AS user_name, u.email AS user_email
+            FROM phone_calls c LEFT JOIN users u ON u.id = c.created_by
+            WHERE {where}
+            ORDER BY c.called_at DESC, c.id DESC LIMIT ?
+            """,
+            [*params, limit + 1],
+        ).fetchall()
+    calls = [
+        {
+            "id": r["id"],
+            "calledAt": r["called_at"],
+            "phone": r["phone"],
+            "name": r["name"],
+            "callType": r["call_type"],
+            "durationSeconds": r["duration_seconds"],
+            "priceCents": r["price_cents"],
+            "userId": r["created_by"],
+            "userName": r["user_name"] or r["user_email"],
+        }
+        for r in rows[:limit]
+    ]
+    return calls, len(rows) > limit
 
 
 def calls_needing_transcript():
@@ -424,10 +484,11 @@ def get_call(call_id):
     return _call_dict(row) if row else None
 
 
-def insert_calls(items):
+def insert_calls(items, created_by=None):
     """Store [(workspace_id, call), ...] in one transaction (all or nothing).
 
+    created_by is the id of the user entering the calls (None for API-key uploads).
     Returns one (status, call_id) per item.
     """
     with connect() as conn:
-        return [_insert_call(conn, call, ws_id) for ws_id, call in items]
+        return [_insert_call(conn, call, ws_id, created_by) for ws_id, call in items]

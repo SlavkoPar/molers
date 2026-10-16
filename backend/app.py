@@ -14,11 +14,13 @@ import speech
 from defusedxml import ElementTree
 from defusedxml.common import DefusedXmlException
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, request, session
+from flask import Flask, Response, abort, jsonify, request, send_from_directory, session
 from flask_cors import CORS
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import safe_join
 
 load_dotenv()
 
@@ -27,14 +29,27 @@ API_KEY = os.environ.get("API_KEY")
 MAX_WORKSPACE_EMAILS = 200
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+PRODUCTION = os.environ.get("PRODUCTION") == "1"
+if PRODUCTION and not os.environ.get("SECRET_KEY"):
+    raise RuntimeError("SECRET_KEY must be set when PRODUCTION=1")
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=PRODUCTION,
     MAX_CONTENT_LENGTH=25 * 1024 * 1024,
 )
-CORS(app, supports_credentials=True, origins=["http://localhost:5173"])
+if PRODUCTION:
+    # behind Render's proxy: trust its forwarded scheme and host
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+# the built app is served from this same origin in production; CORS is for the Vite dev server
+CORS(
+    app,
+    supports_credentials=True,
+    origins=os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(","),
+)
 db.init_db()
 
 
@@ -55,7 +70,9 @@ def unexpected_error(e):
 
 @app.get("/api/hello")
 def hello():
-    return jsonify(message="Hello Slavko!")
+    user = session.get("user") or {}
+    name = user.get("name") or user.get("email")
+    return jsonify(message=f"Hello {name}!" if name else "Hello!")
 
 
 def _text(root, tag, default=""):
@@ -287,7 +304,9 @@ def upload_calls():
     except audio.AudioConversionError as e:
         return jsonify(error=str(e)), 400
 
-    results = db.insert_calls(list(zip(workspace_ids, calls)))
+    results = db.insert_calls(
+        list(zip(workspace_ids, calls)), created_by=user["id"] if user else None
+    )
     ids = [call_id for status, call_id in results if status == "inserted"]
     updated = sum(1 for status, _ in results if status == "updated")
 
@@ -313,47 +332,89 @@ def upload_calls():
     )
 
 
-def read_workspace_id():
-    """(workspace_id, None) for the caller, or (None, error response).
+def read_scope():
+    """(workspace_id, only_by, None) for the caller, or (None, None, error response).
 
-    Signed-in users read their own workspace; API-key callers pass ?workspaceId=.
+    The workspace owner sees every call in it. A member sees only the calls they entered
+    themselves, so only_by is their user id; it is None when nothing is filtered out.
+    API-key callers see all of one workspace and pass ?workspaceId=.
     """
     user = session.get("user")
     if user:
         workspace = db.get_workspace(user["id"], user["email"])
         if not workspace:
-            return None, (jsonify(error="Set up a workspace first"), 403)
-        return workspace["id"], None
+            return None, None, (jsonify(error="Set up a workspace first"), 403)
+        only_by = None if workspace["isOwner"] else user["id"]
+        return workspace["id"], only_by, None
     if not has_valid_api_key():
-        return None, (jsonify(error="Not authenticated"), 401)
+        return None, None, (jsonify(error="Not authenticated"), 401)
     workspace_id = request.args.get("workspaceId", type=int)
     if workspace_id is None or not db.workspace_exists(workspace_id):
-        return None, (jsonify(error="A valid workspaceId is required"), 400)
-    return workspace_id, None
+        return None, None, (jsonify(error="A valid workspaceId is required"), 400)
+    return workspace_id, None, None
+
+
+def in_scope(item, workspace_id, only_by):
+    """Whether a call (or voice record) may be seen under the caller's scope."""
+    return bool(
+        item
+        and item["workspaceId"] == workspace_id
+        and (only_by is None or item["createdBy"] == only_by)
+    )
 
 
 @app.get("/api/calls")
 def list_calls():
-    workspace_id, error = read_workspace_id()
+    workspace_id, only_by, error = read_scope()
     if error:
         return error
 
     limit = min(max(request.args.get("limit", 25, type=int), 1), 200)
     offset = max(request.args.get("offset", 0, type=int), 0)
     query = request.args.get("q", "").strip()
-    calls, total = db.list_calls(workspace_id, query, limit, offset)
+    calls, total = db.list_calls(workspace_id, query, limit, offset, only_by)
     return jsonify(calls=calls, total=total, limit=limit, offset=offset)
+
+
+REPORT_ROW_LIMIT = 5000
+
+
+def _iso_arg(name):
+    """A ?from= / ?to= timestamp, or None when absent. Raises ValueError if malformed."""
+    value = request.args.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"{name} must be an ISO 8601 timestamp")
+    return value
+
+
+@app.get("/api/reports/calls")
+def report_calls():
+    """Calls for the Reports tab: the owner gets the whole workspace, a member only their own."""
+    workspace_id, only_by, error = read_scope()
+    if error:
+        return error
+    try:
+        start, end = _iso_arg("from"), _iso_arg("to")
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+
+    calls, truncated = db.report_calls(workspace_id, only_by, start, end, REPORT_ROW_LIMIT)
+    return jsonify(calls=calls, truncated=truncated, limit=REPORT_ROW_LIMIT)
 
 
 @app.get("/api/calls/<int:call_id>")
 def get_call(call_id):
-    workspace_id, error = read_workspace_id()
+    workspace_id, only_by, error = read_scope()
     if error:
         return error
 
     call = db.get_call(call_id)
-    # another workspace's call looks the same as a missing one
-    if not call or call["workspaceId"] != workspace_id:
+    # a call outside the caller's reach looks the same as a missing one
+    if not in_scope(call, workspace_id, only_by):
         return jsonify(error="Call not found"), 404
     return jsonify(call=call)
 
@@ -385,12 +446,12 @@ def transcribe_in_background(call_ids):
 
 @app.post("/api/calls/<int:call_id>/transcribe")
 def transcribe_call_route(call_id):
-    workspace_id, error = read_workspace_id()
+    workspace_id, only_by, error = read_scope()
     if error:
         return error
 
     call = db.get_call(call_id)
-    if not call or call["workspaceId"] != workspace_id:
+    if not in_scope(call, workspace_id, only_by):
         return jsonify(error="Call not found"), 404
     if not call["hasVoice"]:
         return jsonify(error="This call has no voice message"), 400
@@ -446,7 +507,8 @@ def get_call_voice(call_id):
     voice = db.get_voice(call_id)
     if voice and user:
         workspace = db.get_workspace(user["id"], user["email"])
-        if not workspace or workspace["id"] != voice["workspaceId"]:
+        only_by = None if workspace and workspace["isOwner"] else user["id"]
+        if not workspace or not in_scope(voice, workspace["id"], only_by):
             voice = None  # same answer as a missing call, so ids aren't probeable
     if not voice:
         return jsonify(error="No voice message"), 404
@@ -551,6 +613,31 @@ def transcribe_backlog():
     if call_ids:
         app.logger.info("Transcribing %d call(s) without a transcript", len(call_ids))
         transcribe_in_background(call_ids)
+
+
+FRONTEND_DIR = os.environ.get("FRONTEND_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "frontend", "dist"
+)
+
+if os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
+    # serve the built React app (production); in development Vite serves it instead
+
+    @app.get("/", defaults={"path": ""})
+    @app.get("/<path:path>")
+    def frontend(path):
+        if path == "api" or path.startswith("api/"):
+            abort(404)
+        full = safe_join(FRONTEND_DIR, path)
+        if path and full and os.path.isfile(full):
+            # files under assets/ have content hashes in their names, so they never change
+            max_age = 31536000 if path.startswith("assets/") else 3600
+            return send_from_directory(FRONTEND_DIR, path, max_age=max_age)
+        # any other path is a client-side route: hand it to the app
+        return send_from_directory(FRONTEND_DIR, "index.html", max_age=0)
+
+
+if os.environ.get("TRANSCRIBE_BACKLOG_ON_START") == "1":
+    transcribe_backlog()
 
 
 if __name__ == "__main__":

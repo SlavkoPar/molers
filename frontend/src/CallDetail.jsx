@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { readJson } from "./api.js";
 import { formatDate, formatDuration, formatPrice } from "./format.js";
 
-export default function CallDetail({ callId, onBack }) {
+export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
   const [call, setCall] = useState(null);
   const [error, setError] = useState(null);
   const [transcribing, setTranscribing] = useState(false);
@@ -85,7 +85,7 @@ export default function CallDetail({ callId, onBack }) {
   return (
     <section className="call-detail">
       <button type="button" className="back" onClick={onBack}>
-        ← Back to calls
+        ← Back to {backLabel}
       </button>
 
       {error && <p className="error">{error}</p>}

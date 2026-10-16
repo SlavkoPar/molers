@@ -4,7 +4,7 @@ import { formatDate, formatDuration, formatPrice } from "./format.js";
 
 const PAGE_SIZE = 25;
 
-export default function CallList({ onOpen }) {
+export default function CallList({ onOpen, isOwner }) {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
@@ -46,6 +46,11 @@ export default function CallList({ onOpen }) {
 
   return (
     <section className="call-list">
+      {!isOwner && (
+        <p className="muted">
+          You see only the calls you entered. The workspace owner sees all calls.
+        </p>
+      )}
       <input
         type="search"
         className="search"

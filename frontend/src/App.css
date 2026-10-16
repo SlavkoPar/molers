@@ -264,6 +264,123 @@ main {
   outline: none;
 }
 
+.report-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.report-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.report-controls input {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button {
+  padding: 7px 14px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.segmented button:last-child {
+  border-right: 0;
+}
+
+.segmented button[aria-selected="true"] {
+  background: var(--hover);
+  font-weight: 600;
+}
+
+.report-total,
+.group > summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.report-total {
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--border);
+}
+
+.stats {
+  display: flex;
+  gap: 16px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.group > summary {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.group > summary:hover {
+  background: var(--hover);
+}
+
+.group-title {
+  font-weight: 600;
+}
+
+.group.depth-1 {
+  margin-left: 20px;
+}
+
+.group table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.group td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.group td small {
+  display: block;
+  color: var(--muted);
+}
+
+.group tbody tr {
+  cursor: pointer;
+}
+
+.group tbody tr:hover,
+.group tbody tr:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
 .pager {
   display: flex;
   align-items: center;
