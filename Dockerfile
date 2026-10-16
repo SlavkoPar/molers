@@ -3,13 +3,13 @@
 # --- build the React app ---
 FROM node:22-slim AS frontend
 WORKDIR /build
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+COPY frontend/package.json frontend/yarn.lock ./
+RUN yarn install --frozen-lockfile
 COPY frontend/ ./
 # Vite bakes this public value into the bundle at build time (Render passes env vars as build args)
 ARG VITE_GOOGLE_CLIENT_ID
 ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
-RUN npm run build
+RUN yarn build
 
 # --- run the Flask app ---
 FROM python:3.13-slim
