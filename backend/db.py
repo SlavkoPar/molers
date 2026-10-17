@@ -7,10 +7,14 @@ DB_PATH = os.environ.get(
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    id         TEXT PRIMARY KEY,
-    email      TEXT NOT NULL,
-    name       TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id             TEXT PRIMARY KEY,
+    email          TEXT NOT NULL,
+    name           TEXT,
+    created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    auth_provider  TEXT NOT NULL DEFAULT 'google',
+    password_hash  TEXT,
+    -- Google confirms its addresses; an address typed into a signup form is not confirmed
+    email_verified INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -92,6 +96,13 @@ def _migrate(conn):
             "ALTER TABLE phone_calls ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)"
         )
 
+    user_columns = _columns(conn, "users")
+    if "auth_provider" not in user_columns:
+        # every account so far signed in with Google, so its email is verified
+        conn.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'google'")
+        conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+        conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1")
+
     if "created_by" not in _columns(conn, "phone_calls"):
         # calls stored before this stay NULL, so only the workspace owner sees them
         conn.execute(
@@ -139,6 +150,13 @@ def init_db():
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_workspace_members_email ON workspace_members(email)"
         )
+        # one password account per email address, whatever the letter case
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_users_password_email
+            ON users(lower(email)) WHERE auth_provider = 'password'
+            """
+        )
         conn.commit()
     finally:
         conn.close()
@@ -165,13 +183,63 @@ def upsert_user(user_id, email, name):
         )
 
 
+def email_in_use(email):
+    """Whether any account, Google or password, already uses this address."""
+    with connect() as conn:
+        return (
+            conn.execute(
+                "SELECT 1 FROM users WHERE lower(email) = lower(?)", (email,)
+            ).fetchone()
+            is not None
+        )
+
+
+def create_password_user(user_id, email, name, password_hash):
+    """Add an email-and-password account. Raises ValueError if the email is taken."""
+    try:
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (id, email, name, auth_provider, password_hash, email_verified)
+                VALUES (?, ?, ?, 'password', ?, 0)
+                """,
+                (user_id, email, name, password_hash),
+            )
+    except sqlite3.IntegrityError:
+        raise ValueError("An account with this email already exists")
+
+
+def find_password_user(email):
+    """The password account for this address, or None."""
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, email, name, password_hash, email_verified FROM users
+            WHERE auth_provider = 'password' AND lower(email) = lower(?)
+            """,
+            (email,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _email_verified(conn, user_id):
+    row = conn.execute(
+        "SELECT email_verified FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    return bool(row and row["email_verified"])
+
+
 def get_workspace(user_id, email):
-    """The workspace the user owns, or else one that lists their email."""
+    """The workspace the user owns, or else one that lists their email.
+
+    Membership is matched by email, so it only applies to a verified address: otherwise
+    anyone could join a workspace by signing up with a member's email.
+    """
     with connect() as conn:
         ws = conn.execute(
             "SELECT id, name, owner_id FROM workspaces WHERE owner_id = ?", (user_id,)
         ).fetchone()
-        if not ws and email:
+        if not ws and email and _email_verified(conn, user_id):
             ws = conn.execute(
                 """
                 SELECT w.id, w.name, w.owner_id FROM workspaces w

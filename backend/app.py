@@ -7,6 +7,8 @@ import os
 import re
 import sqlite3
 import threading
+import time
+import uuid
 
 import audio
 import db
@@ -20,6 +22,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import safe_join
 
 load_dotenv()
@@ -536,9 +539,133 @@ def auth_google():
         "email": info.get("email"),
         "name": info.get("name"),
         "picture": info.get("picture"),
+        "emailVerified": True,  # Google has confirmed the address
     }
     db.upsert_user(info["sub"], info.get("email"), info.get("name"))
     return auth_payload(session["user"])
+
+
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
+ATTEMPT_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_FAILURES_PER_ADDRESS = 5  # wrong passwords for one email from one IP address
+LOGIN_MAX_FAILURES_PER_EMAIL = 20  # wrong passwords for one email from anywhere
+REGISTER_MAX_PER_ADDRESS = 10
+
+# Recent attempts per key, for rate limiting. In memory, which is enough for the single
+# worker this app runs with; they are forgotten on restart.
+_attempts = {}
+_attempts_lock = threading.Lock()
+# Checked against when the email is unknown, so a wrong email costs as much time as a wrong password.
+_DUMMY_HASH = generate_password_hash("not-a-real-password")
+
+
+def _recent_attempts(key, now):
+    stamps = [t for t in _attempts.get(key, []) if now - t < ATTEMPT_WINDOW_SECONDS]
+    if stamps:
+        _attempts[key] = stamps
+    else:
+        _attempts.pop(key, None)
+    return stamps
+
+
+def is_throttled(key, limit):
+    with _attempts_lock:
+        return len(_recent_attempts(key, time.monotonic())) >= limit
+
+
+def note_attempt(key):
+    with _attempts_lock:
+        now = time.monotonic()
+        if len(_attempts) > 10000:  # keep memory bounded under a flood of made-up emails
+            for old in list(_attempts):
+                _recent_attempts(old, now)
+        _recent_attempts(key, now)
+        _attempts.setdefault(key, []).append(now)
+
+
+def forget_attempts(key):
+    with _attempts_lock:
+        _attempts.pop(key, None)
+
+
+def start_session(user):
+    """Sign the user in with a fresh session (never reuse one from before the login)."""
+    session.clear()
+    session["user"] = {
+        "id": user["id"],
+        "email": user["email"],
+        "name": user["name"],
+        "picture": None,
+        "emailVerified": bool(user["email_verified"]),
+    }
+    return auth_payload(session["user"])
+
+
+def too_many_attempts():
+    return jsonify(error="Too many attempts. Please wait a few minutes and try again."), 429
+
+
+@app.post("/api/auth/register")
+def auth_register():
+    address_key = f"register|{request.remote_addr}"
+    if is_throttled(address_key, REGISTER_MAX_PER_ADDRESS):
+        return too_many_attempts()
+    note_attempt(address_key)
+
+    body = request.get_json(silent=True) or {}
+    email = str(body.get("email") or "").strip().lower()
+    password = str(body.get("password") or "")  # spaces in a password are meant
+    name = str(body.get("name") or "").strip()[:100] or email.split("@")[0]
+
+    if not EMAIL_RE.match(email) or len(email) > 254:
+        return jsonify(error="Enter a valid email address"), 400
+    if len(password) < PASSWORD_MIN_LENGTH:
+        return jsonify(error=f"Password must be at least {PASSWORD_MIN_LENGTH} characters"), 400
+    if len(password) > PASSWORD_MAX_LENGTH:
+        return jsonify(error=f"Password must be at most {PASSWORD_MAX_LENGTH} characters"), 400
+    if password.lower() == email:
+        return jsonify(error="Password must not be your email address"), 400
+    if db.email_in_use(email):
+        return (
+            jsonify(error="An account with this email already exists. Sign in instead."),
+            409,
+        )
+
+    user_id = f"local:{uuid.uuid4().hex}"
+    try:
+        db.create_password_user(user_id, email, name, generate_password_hash(password))
+    except ValueError as e:  # someone registered the same address a moment earlier
+        return jsonify(error=str(e)), 409
+    return start_session(
+        {"id": user_id, "email": email, "name": name, "email_verified": 0}
+    ), 201
+
+
+@app.post("/api/auth/login")
+def auth_login():
+    body = request.get_json(silent=True) or {}
+    email = str(body.get("email") or "").strip().lower()
+    password = str(body.get("password") or "")
+
+    address_key = f"login|{request.remote_addr}|{email}"
+    email_key = f"login-email|{email}"
+    if is_throttled(address_key, LOGIN_MAX_FAILURES_PER_ADDRESS) or is_throttled(
+        email_key, LOGIN_MAX_FAILURES_PER_EMAIL
+    ):
+        return too_many_attempts()
+
+    user = db.find_password_user(email) if len(password) <= PASSWORD_MAX_LENGTH else None
+    password_ok = check_password_hash(
+        user["password_hash"] if user else _DUMMY_HASH, password
+    )
+    if not (user and password_ok):
+        note_attempt(address_key)
+        note_attempt(email_key)
+        return jsonify(error="Invalid email or password"), 401
+
+    forget_attempts(address_key)
+    return start_session(user)
 
 
 def auth_payload(user):

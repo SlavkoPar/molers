@@ -191,6 +191,14 @@ main {
   margin-bottom: 16px;
 }
 
+.auth {
+  max-width: 480px;
+}
+
+.auth-form .tabs {
+  margin-bottom: 0;
+}
+
 .tabs button,
 .back,
 .pager button {

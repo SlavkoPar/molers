@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readJson } from "./api.js";
+import PasswordForm from "./PasswordForm.jsx";
 import ProfileMenu from "./ProfileMenu.jsx";
 import Calls from "./Calls.jsx";
 import WorkspaceForm from "./WorkspaceForm.jsx";
@@ -131,6 +132,13 @@ export default function App() {
         )}
       </header>
       <main>
+        {needsWorkspace && user.emailVerified === false && (
+          <p className="muted">
+            Were you invited to a workspace? Sign out and sign in with Google using the
+            invited address. Accounts created with an email and password can't join a
+            workspace by invitation yet, because their email isn't verified.
+          </p>
+        )}
         {needsWorkspace || editingWorkspace ? (
           <WorkspaceForm
             workspace={workspace}
@@ -146,7 +154,13 @@ export default function App() {
             {user && workspace && <Calls workspaceName={workspace.name} isOwner={workspace.isOwner} />}
           </>
         )}
-        {!checking && !user && <GoogleSignIn onSignedIn={handleSignedIn} />}
+        {!checking && !user && (
+          <div className="auth">
+            <PasswordForm onSignedIn={handleSignedIn} />
+            <p className="muted">or</p>
+            <GoogleSignIn onSignedIn={handleSignedIn} />
+          </div>
+        )}
       </main>
     </>
   );
