@@ -1,5 +1,9 @@
 import base64
+import hashlib
+import secrets
+import smtplib
 from datetime import datetime
+from email.message import EmailMessage
 from xml.etree.ElementTree import Element, SubElement  # building only, never parsing
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 import hmac
@@ -550,7 +554,6 @@ PASSWORD_MAX_LENGTH = 128
 ATTEMPT_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_FAILURES_PER_ADDRESS = 5  # wrong passwords for one email from one IP address
 LOGIN_MAX_FAILURES_PER_EMAIL = 20  # wrong passwords for one email from anywhere
-REGISTER_MAX_PER_ADDRESS = 10
 
 # Recent attempts per key, for rate limiting. In memory, which is enough for the single
 # worker this app runs with; they are forgotten on restart.
@@ -606,40 +609,118 @@ def too_many_attempts():
     return jsonify(error="Too many attempts. Please wait a few minutes and try again."), 429
 
 
-@app.post("/api/auth/register")
-def auth_register():
-    address_key = f"register|{request.remote_addr}"
-    if is_throttled(address_key, REGISTER_MAX_PER_ADDRESS):
+SIGN_IN_LINK_SECONDS = 60 * 60  # an emailed link works for one hour
+LINK_REQUESTS_PER_ADDRESS = 10  # per IP address, per attempt window
+LINK_REQUESTS_PER_EMAIL = 5  # per email address, per attempt window
+VERIFY_ATTEMPTS_PER_ADDRESS = 30
+
+
+def sign_in_base_url():
+    """Where emailed links point. Never taken from the request: a forged Host header
+    would otherwise make the app mail out links to someone else's server."""
+    url = os.environ.get("APP_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+    return (url or "http://localhost:5173").rstrip("/")
+
+
+def email_enabled():
+    return bool(os.environ.get("SMTP_HOST") and os.environ.get("SMTP_FROM"))
+
+
+def send_email(to, subject, body):
+    host = os.environ["SMTP_HOST"]
+    port = int(os.environ.get("SMTP_PORT") or 587)
+    user = os.environ.get("SMTP_USER")
+    password = os.environ.get("SMTP_PASSWORD")
+
+    message = EmailMessage()
+    message["From"] = os.environ["SMTP_FROM"]
+    message["To"] = to
+    message["Subject"] = subject
+    # plain 7-bit text keeps the long link on one unmodified line (the default would wrap it)
+    message.set_content(body, cte="7bit")
+
+    # port 465 is TLS from the first byte; the others start plain and upgrade
+    if port == 465:
+        smtp = smtplib.SMTP_SSL(host, port, timeout=20)
+    else:
+        smtp = smtplib.SMTP(host, port, timeout=20)
+    with smtp:
+        if port != 465 and os.environ.get("SMTP_STARTTLS", "1") != "0":
+            smtp.starttls()
+        if user:
+            smtp.login(user, password or "")
+        smtp.send_message(message)
+
+
+def deliver_sign_in_link(email, link):
+    """Email the link; runs in a thread so the reply never reveals whether it worked."""
+    if not email_enabled():
+        # development without a mail server: print the link where the developer can click it
+        app.logger.warning("SMTP is not configured. Sign-in link for %s: %s", email, link)
+        return
+    try:
+        send_email(
+            email,
+            "Your Molers sign-in link",
+            "Open this link to sign in to Molers:\n\n"
+            f"{link}\n\n"
+            "It works once and expires in one hour. "
+            "If you did not ask for it, you can ignore this email.\n",
+        )
+    except Exception:
+        app.logger.exception("Could not send the sign-in link to %s", email)
+
+
+@app.post("/api/auth/email-link")
+def auth_email_link():
+    """Sign up or sign in with just an email address: mail a one-hour link."""
+    address_key = f"link|{request.remote_addr}"
+    if is_throttled(address_key, LINK_REQUESTS_PER_ADDRESS):
         return too_many_attempts()
     note_attempt(address_key)
 
-    body = request.get_json(silent=True) or {}
-    email = str(body.get("email") or "").strip().lower()
-    password = str(body.get("password") or "")  # spaces in a password are meant
-    name = str(body.get("name") or "").strip()[:100] or email.split("@")[0]
-
+    email = str((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
     if not EMAIL_RE.match(email) or len(email) > 254:
         return jsonify(error="Enter a valid email address"), 400
-    if len(password) < PASSWORD_MIN_LENGTH:
-        return jsonify(error=f"Password must be at least {PASSWORD_MIN_LENGTH} characters"), 400
-    if len(password) > PASSWORD_MAX_LENGTH:
-        return jsonify(error=f"Password must be at most {PASSWORD_MAX_LENGTH} characters"), 400
-    if password.lower() == email:
-        return jsonify(error="Password must not be your email address"), 400
-    if db.email_in_use(email):
-        return (
-            jsonify(error="An account with this email already exists. Sign in instead."),
-            409,
-        )
 
-    user_id = f"local:{uuid.uuid4().hex}"
-    try:
-        db.create_password_user(user_id, email, name, generate_password_hash(password))
-    except ValueError as e:  # someone registered the same address a moment earlier
-        return jsonify(error=str(e)), 409
-    return start_session(
-        {"id": user_id, "email": email, "name": name, "email_verified": 0}
-    ), 201
+    email_key = f"link-email|{email}"
+    if is_throttled(email_key, LINK_REQUESTS_PER_EMAIL):
+        return too_many_attempts()
+    note_attempt(email_key)
+
+    if PRODUCTION and not email_enabled():
+        return jsonify(error="Signing in by email is not set up on this server"), 503
+
+    token = secrets.token_urlsafe(32)
+    now = int(time.time())
+    db.create_sign_in_token(
+        email, hashlib.sha256(token.encode()).hexdigest(), now + SIGN_IN_LINK_SECONDS, now
+    )
+    link = f"{sign_in_base_url()}/?signin={token}"
+    threading.Thread(target=deliver_sign_in_link, args=(email, link), daemon=True).start()
+
+    # the same answer whether or not the address already has an account
+    return jsonify(ok=True, validMinutes=SIGN_IN_LINK_SECONDS // 60), 202
+
+
+@app.post("/api/auth/email-link/verify")
+def auth_email_link_verify():
+    """Trade an emailed token for a session. Done by the page (a POST) rather than by
+    the link itself, so mail scanners that open links cannot use the link up."""
+    address_key = f"verify|{request.remote_addr}"
+    if is_throttled(address_key, VERIFY_ATTEMPTS_PER_ADDRESS):
+        return too_many_attempts()
+    note_attempt(address_key)
+
+    token = str((request.get_json(silent=True) or {}).get("token") or "")
+    email = db.consume_sign_in_token(
+        hashlib.sha256(token.encode()).hexdigest(), int(time.time())
+    )
+    if not email:
+        return jsonify(error="This sign-in link is invalid, already used, or has expired"), 400
+
+    user = db.user_for_verified_email(email, f"email:{uuid.uuid4().hex}")
+    return start_session(user)
 
 
 @app.post("/api/auth/login")
@@ -655,6 +736,7 @@ def auth_login():
     ):
         return too_many_attempts()
 
+    # accounts made before sign-up went by email may still have a password
     user = db.find_password_user(email) if len(password) <= PASSWORD_MAX_LENGTH else None
     password_ok = check_password_hash(
         user["password_hash"] if user else _DUMMY_HASH, password

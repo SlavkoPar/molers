@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readJson } from "./api.js";
+import EmailLinkForm from "./EmailLinkForm.jsx";
 import PasswordForm from "./PasswordForm.jsx";
 import ProfileMenu from "./ProfileMenu.jsx";
 import Calls from "./Calls.jsx";
@@ -73,6 +74,7 @@ export default function App() {
   const [theme, setTheme] = useState(getInitialTheme);
   const [workspace, setWorkspace] = useState(null);
   const [editingWorkspace, setEditingWorkspace] = useState(false);
+  const [linkError, setLinkError] = useState(null);
 
   const handleSignedIn = useCallback((data) => {
     setUser(data.user);
@@ -98,6 +100,25 @@ export default function App() {
       .then((data) => setMessage(data.message ?? data.error))
       .catch((err) => setMessage(`Error: ${err.message}`));
   }, [userId]);
+
+  // arriving from an emailed link (?signin=<token>): trade the token for a session
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("signin");
+    if (!token) return;
+    // take the token out of the address bar at once, so it stays out of history and screenshots
+    window.history.replaceState({}, "", window.location.pathname);
+    fetch("/api/auth/email-link/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    })
+      .then(async (res) => ({ res, body: await readJson(res) }))
+      .then(({ res, body }) => {
+        if (res.ok) handleSignedIn(body);
+        else setLinkError(body.error || "That sign-in link did not work");
+      })
+      .catch((err) => setLinkError(err.message));
+  }, [handleSignedIn]);
 
   useEffect(() => {
     fetch("/api/auth/me")
@@ -134,9 +155,9 @@ export default function App() {
       <main>
         {needsWorkspace && user.emailVerified === false && (
           <p className="muted">
-            Were you invited to a workspace? Sign out and sign in with Google using the
-            invited address. Accounts created with an email and password can't join a
-            workspace by invitation yet, because their email isn't verified.
+            Were you invited to a workspace? Sign out, then sign in with an emailed link
+            (or Google) using the invited address. This account signs in with a password
+            and its email isn't verified, so it can't join a workspace by invitation.
           </p>
         )}
         {needsWorkspace || editingWorkspace ? (
@@ -156,9 +177,11 @@ export default function App() {
         )}
         {!checking && !user && (
           <div className="auth">
-            <PasswordForm onSignedIn={handleSignedIn} />
+            {linkError && <p className="error">{linkError}</p>}
+            <EmailLinkForm />
             <p className="muted">or</p>
             <GoogleSignIn onSignedIn={handleSignedIn} />
+            <PasswordForm onSignedIn={handleSignedIn} />
           </div>
         )}
       </main>

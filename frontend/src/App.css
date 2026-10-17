@@ -195,8 +195,17 @@ main {
   max-width: 480px;
 }
 
-.auth-form .tabs {
-  margin-bottom: 0;
+.auth > * + * {
+  margin-top: 16px;
+}
+
+.password-signin summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.password-signin form {
+  margin-top: 12px;
 }
 
 .tabs button,

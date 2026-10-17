@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS persons (
     UNIQUE (workspace_id, phone)
 );
 
+-- Emailed sign-in links. Only a hash of the token is stored, so a copy of the database
+-- cannot be used to sign in.
+CREATE TABLE IF NOT EXISTS sign_in_tokens (
+    token_hash TEXT PRIMARY KEY,
+    email      TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at    INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS exports (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -150,11 +159,17 @@ def init_db():
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_workspace_members_email ON workspace_members(email)"
         )
-        # one password account per email address, whatever the letter case
+        # one account made by email or password per address, whatever the letter case
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_users_password_email
             ON users(lower(email)) WHERE auth_provider = 'password'
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_signup
+            ON users(lower(email)) WHERE auth_provider = 'email'
             """
         )
         conn.commit()
@@ -183,39 +198,78 @@ def upsert_user(user_id, email, name):
         )
 
 
-def email_in_use(email):
-    """Whether any account, Google or password, already uses this address."""
+def create_sign_in_token(email, token_hash, expires_at, now):
+    """Remember a sign-in link (only a hash of its token is kept) and drop expired ones."""
     with connect() as conn:
-        return (
-            conn.execute(
-                "SELECT 1 FROM users WHERE lower(email) = lower(?)", (email,)
-            ).fetchone()
-            is not None
+        conn.execute("DELETE FROM sign_in_tokens WHERE expires_at < ?", (now,))
+        conn.execute(
+            "INSERT INTO sign_in_tokens (token_hash, email, expires_at) VALUES (?, ?, ?)",
+            (token_hash, email, expires_at),
         )
 
 
-def create_password_user(user_id, email, name, password_hash):
-    """Add an email-and-password account. Raises ValueError if the email is taken."""
-    try:
-        with connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO users (id, email, name, auth_provider, password_hash, email_verified)
-                VALUES (?, ?, ?, 'password', ?, 0)
-                """,
-                (user_id, email, name, password_hash),
-            )
-    except sqlite3.IntegrityError:
-        raise ValueError("An account with this email already exists")
+def consume_sign_in_token(token_hash, now):
+    """Use up a sign-in link. Returns its email, or None if unknown, used or expired."""
+    with connect() as conn:
+        # one UPDATE decides, so two requests can never both use the same link
+        used = conn.execute(
+            """
+            UPDATE sign_in_tokens SET used_at = ?
+            WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
+            """,
+            (now, token_hash, now),
+        )
+        if used.rowcount != 1:
+            return None
+        return conn.execute(
+            "SELECT email FROM sign_in_tokens WHERE token_hash = ?", (token_hash,)
+        ).fetchone()["email"]
+
+
+def user_for_verified_email(email, new_user_id):
+    """The account for an address whose owner just proved it, created if there is none.
+
+    An existing account that was not verified (a password account made before sign-up
+    went by email) becomes verified, and its password is removed: whoever chose that
+    password never proved they own the address.
+    """
+    with connect() as conn:
+        user = conn.execute(
+            """
+            SELECT id, email, name, email_verified FROM users
+            WHERE lower(email) = lower(?)
+            ORDER BY (auth_provider = 'google') DESC, created_at
+            LIMIT 1
+            """,
+            (email,),
+        ).fetchone()
+        if user:
+            if not user["email_verified"]:
+                conn.execute(
+                    "UPDATE users SET email_verified = 1, password_hash = NULL WHERE id = ?",
+                    (user["id"],),
+                )
+            return {"id": user["id"], "email": user["email"], "name": user["name"], "email_verified": 1}
+
+        name = email.split("@")[0]
+        conn.execute(
+            """
+            INSERT INTO users (id, email, name, auth_provider, email_verified)
+            VALUES (?, ?, ?, 'email', 1)
+            """,
+            (new_user_id, email, name),
+        )
+        return {"id": new_user_id, "email": email, "name": name, "email_verified": 1}
 
 
 def find_password_user(email):
-    """The password account for this address, or None."""
+    """The account with a password for this address, or None."""
     with connect() as conn:
         row = conn.execute(
             """
             SELECT id, email, name, password_hash, email_verified FROM users
-            WHERE auth_provider = 'password' AND lower(email) = lower(?)
+            WHERE auth_provider = 'password' AND password_hash IS NOT NULL
+              AND lower(email) = lower(?)
             """,
             (email,),
         ).fetchone()

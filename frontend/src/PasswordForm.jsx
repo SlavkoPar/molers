@@ -1,21 +1,20 @@
 import { useState } from "react";
 import { readJson } from "./api.js";
 
+// Password sign-in for accounts that already have a password. New accounts are made
+// with an emailed link (see EmailLinkForm), so there is no sign-up here.
 export default function PasswordForm({ onSignedIn }) {
-  const [mode, setMode] = useState("login"); // "login" | "register"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-
-  const registering = mode === "register";
 
   const submit = async (e) => {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      const res = await fetch(`/api/auth/${registering ? "register" : "login"}`, {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -34,62 +33,40 @@ export default function PasswordForm({ onSignedIn }) {
   };
 
   return (
-    <form className="workspace-form auth-form" onSubmit={submit}>
-      <nav className="tabs">
-        <button
-          type="button"
-          aria-current={!registering ? "page" : undefined}
-          onClick={() => {
-            setMode("login");
-            setError(null);
-          }}
-        >
-          Sign in
-        </button>
-        <button
-          type="button"
-          aria-current={registering ? "page" : undefined}
-          onClick={() => {
-            setMode("register");
-            setError(null);
-          }}
-        >
-          Create account
-        </button>
-      </nav>
+    <details className="password-signin">
+      <summary>Sign in with a password</summary>
+      <form className="workspace-form" onSubmit={submit}>
+        <label>
+          Email
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            required
+          />
+        </label>
 
-      <label>
-        Email
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="email"
-          required
-        />
-      </label>
+        <label>
+          Password
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            maxLength={128}
+            required
+          />
+        </label>
 
-      <label>
-        Password
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete={registering ? "new-password" : "current-password"}
-          minLength={registering ? 8 : undefined}
-          maxLength={128}
-          required
-        />
-        {registering && <small>At least 8 characters.</small>}
-      </label>
+        {error && <p className="error">{error}</p>}
 
-      {error && <p className="error">{error}</p>}
-
-      <div className="form-actions">
-        <button type="submit" disabled={busy || !email || !password}>
-          {busy ? "Please wait..." : registering ? "Create account" : "Sign in"}
-        </button>
-      </div>
-    </form>
+        <div className="form-actions">
+          <button type="submit" disabled={busy || !email || !password}>
+            {busy ? "Please wait..." : "Sign in"}
+          </button>
+        </div>
+      </form>
+    </details>
   );
 }

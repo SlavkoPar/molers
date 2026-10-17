@@ -29,6 +29,18 @@ services:
       # Lets phones and scripts post calls without signing in (header X-API-Key).
       - key: API_KEY
         sync: false
+      # Email for the sign-in links (any SMTP service). Links point at RENDER_EXTERNAL_URL,
+      # which Render sets; add APP_BASE_URL only if you use your own domain.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
       # Speech-to-text for voice messages.
       - key: SPEECH_SERVER_URL
         value: https://moler.expo.app
