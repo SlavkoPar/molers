@@ -24,4 +24,5 @@ COPY --from=frontend /build/dist frontend/dist
 
 # Render sets PORT. One worker: SQLite and the background transcription threads share its memory;
 # the long timeout covers voice conversion plus the speech service.
-CMD gunicorn --chdir backend app:app --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 4 --timeout 180
+# `exec` makes gunicorn the main process, so it receives Render's shutdown signal directly.
+CMD ["sh", "-c", "exec gunicorn --chdir backend app:app --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 4 --timeout 180"]
