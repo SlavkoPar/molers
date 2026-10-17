@@ -26,7 +26,6 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import safe_join
 
 load_dotenv()
@@ -549,18 +548,12 @@ def auth_google():
     return auth_payload(session["user"])
 
 
-PASSWORD_MIN_LENGTH = 8
-PASSWORD_MAX_LENGTH = 128
 ATTEMPT_WINDOW_SECONDS = 15 * 60
-LOGIN_MAX_FAILURES_PER_ADDRESS = 5  # wrong passwords for one email from one IP address
-LOGIN_MAX_FAILURES_PER_EMAIL = 20  # wrong passwords for one email from anywhere
 
 # Recent attempts per key, for rate limiting. In memory, which is enough for the single
 # worker this app runs with; they are forgotten on restart.
 _attempts = {}
 _attempts_lock = threading.Lock()
-# Checked against when the email is unknown, so a wrong email costs as much time as a wrong password.
-_DUMMY_HASH = generate_password_hash("not-a-real-password")
 
 
 def _recent_attempts(key, now):
@@ -585,11 +578,6 @@ def note_attempt(key):
                 _recent_attempts(old, now)
         _recent_attempts(key, now)
         _attempts.setdefault(key, []).append(now)
-
-
-def forget_attempts(key):
-    with _attempts_lock:
-        _attempts.pop(key, None)
 
 
 def start_session(user):
@@ -667,8 +655,12 @@ def deliver_sign_in_link(email, link):
             "It works once and expires in one hour. "
             "If you did not ask for it, you can ignore this email.\n",
         )
-    except Exception:
-        app.logger.exception("Could not send the sign-in link to %s", email)
+    except Exception as e:
+        # the reason goes in the first line, since that is the line people copy from the logs
+        app.logger.error(
+            "Could not send the sign-in link to %s: %s: %s",
+            email, type(e).__name__, e, exc_info=True,
+        )
 
 
 @app.post("/api/auth/email-link")
@@ -720,33 +712,6 @@ def auth_email_link_verify():
         return jsonify(error="This sign-in link is invalid, already used, or has expired"), 400
 
     user = db.user_for_verified_email(email, f"email:{uuid.uuid4().hex}")
-    return start_session(user)
-
-
-@app.post("/api/auth/login")
-def auth_login():
-    body = request.get_json(silent=True) or {}
-    email = str(body.get("email") or "").strip().lower()
-    password = str(body.get("password") or "")
-
-    address_key = f"login|{request.remote_addr}|{email}"
-    email_key = f"login-email|{email}"
-    if is_throttled(address_key, LOGIN_MAX_FAILURES_PER_ADDRESS) or is_throttled(
-        email_key, LOGIN_MAX_FAILURES_PER_EMAIL
-    ):
-        return too_many_attempts()
-
-    # accounts made before sign-up went by email may still have a password
-    user = db.find_password_user(email) if len(password) <= PASSWORD_MAX_LENGTH else None
-    password_ok = check_password_hash(
-        user["password_hash"] if user else _DUMMY_HASH, password
-    )
-    if not (user and password_ok):
-        note_attempt(address_key)
-        note_attempt(email_key)
-        return jsonify(error="Invalid email or password"), 401
-
-    forget_attempts(address_key)
     return start_session(user)
 
 

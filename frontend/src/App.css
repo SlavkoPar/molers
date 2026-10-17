@@ -199,15 +199,6 @@ main {
   margin-top: 16px;
 }
 
-.password-signin summary {
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.password-signin form {
-  margin-top: 12px;
-}
-
 .tabs button,
 .back,
 .pager button {

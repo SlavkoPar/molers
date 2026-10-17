@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readJson } from "./api.js";
 import EmailLinkForm from "./EmailLinkForm.jsx";
-import PasswordForm from "./PasswordForm.jsx";
 import ProfileMenu from "./ProfileMenu.jsx";
 import Calls from "./Calls.jsx";
 import WorkspaceForm from "./WorkspaceForm.jsx";
@@ -153,13 +152,6 @@ export default function App() {
         )}
       </header>
       <main>
-        {needsWorkspace && user.emailVerified === false && (
-          <p className="muted">
-            Were you invited to a workspace? Sign out, then sign in with an emailed link
-            (or Google) using the invited address. This account signs in with a password
-            and its email isn't verified, so it can't join a workspace by invitation.
-          </p>
-        )}
         {needsWorkspace || editingWorkspace ? (
           <WorkspaceForm
             workspace={workspace}
@@ -181,7 +173,6 @@ export default function App() {
             <EmailLinkForm />
             <p className="muted">or</p>
             <GoogleSignIn onSignedIn={handleSignedIn} />
-            <PasswordForm onSignedIn={handleSignedIn} />
           </div>
         )}
       </main>

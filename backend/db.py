@@ -262,18 +262,6 @@ def user_for_verified_email(email, new_user_id):
         return {"id": new_user_id, "email": email, "name": name, "email_verified": 1}
 
 
-def find_password_user(email):
-    """The account with a password for this address, or None."""
-    with connect() as conn:
-        row = conn.execute(
-            """
-            SELECT id, email, name, password_hash, email_verified FROM users
-            WHERE auth_provider = 'password' AND password_hash IS NOT NULL
-              AND lower(email) = lower(?)
-            """,
-            (email,),
-        ).fetchone()
-    return dict(row) if row else None
 
 
 def _email_verified(conn, user_id):
