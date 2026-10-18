@@ -7,6 +7,7 @@ from email.message import EmailMessage
 from xml.etree.ElementTree import Element, SubElement  # building only, never parsing
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 import hmac
+import logging
 import os
 import re
 import sqlite3
@@ -655,6 +656,7 @@ def deliver_sign_in_link(email, link):
             "It works once and expires in one hour. "
             "If you did not ask for it, you can ignore this email.\n",
         )
+        app.logger.info("Sign-in link sent to %s", email)
     except Exception as e:
         # the reason goes in the first line, since that is the line people copy from the logs
         app.logger.error(
@@ -809,6 +811,21 @@ if os.path.isfile(os.path.join(FRONTEND_DIR, "index.html")):
         # any other path is a client-side route: hand it to the app
         return send_from_directory(FRONTEND_DIR, "index.html", max_age=0)
 
+
+app.logger.setLevel(logging.INFO)  # so the "sent" and "configured" lines below are visible
+if email_enabled():
+    app.logger.info(
+        "Email sign-in: sending through %s:%s as %s",
+        os.environ["SMTP_HOST"], os.environ.get("SMTP_PORT") or 587, os.environ["SMTP_FROM"],
+    )
+else:
+    app.logger.warning(
+        "Email sign-in: SMTP_HOST / SMTP_FROM are not set, so no email is sent. "
+        "%s",
+        "Sign-in is refused until they are set."
+        if PRODUCTION
+        else "Sign-in links are printed in this log instead.",
+    )
 
 if os.environ.get("TRANSCRIBE_BACKLOG_ON_START") == "1":
     transcribe_backlog()
