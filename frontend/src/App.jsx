@@ -164,7 +164,11 @@ export default function App() {
         ) : (
           <>
             <h1>{message}</h1>
-            {user && workspace && <Calls workspaceName={workspace.name} isOwner={workspace.isOwner} />}
+            {user && workspace && <Calls
+                workspaceName={workspace.name}
+                isOwner={workspace.isOwner}
+                isAdmin={Boolean(user.isAdmin)}
+              />}
           </>
         )}
         {!checking && !user && (

@@ -2,7 +2,15 @@ import { useEffect, useState } from "react";
 import { readJson } from "./api.js";
 import { formatDate, formatDuration, formatPrice } from "./format.js";
 
-export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
+// apiBase: "/api/calls", or "/api/admin/calls" when the administrator views another
+// workspace's call, which is read-only (no Transcribe button).
+export default function CallDetail({
+  callId,
+  onBack,
+  backLabel = "calls",
+  apiBase = "/api/calls",
+  readOnly = false,
+}) {
   const [call, setCall] = useState(null);
   const [error, setError] = useState(null);
   const [transcribing, setTranscribing] = useState(false);
@@ -13,7 +21,7 @@ export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
     setCall(null);
     setError(null);
     setTranscribeMessage(null);
-    fetch(`/api/calls/${callId}`)
+    fetch(`${apiBase}/${callId}`)
       .then(async (res) => ({ res, body: await readJson(res) }))
       .then(({ res, body }) => {
         if (cancelled) return;
@@ -24,7 +32,7 @@ export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
     return () => {
       cancelled = true;
     };
-  }, [callId]);
+  }, [callId, apiBase]);
 
   // A new voice message is transcribed in the background: check back until the text arrives.
   const awaitingTranscript = call?.hasVoice && !call.transcript;
@@ -37,7 +45,7 @@ export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
         return;
       }
       try {
-        const res = await fetch(`/api/calls/${callId}`);
+        const res = await fetch(`${apiBase}/${callId}`);
         if (!res.ok) return;
         const { call: fresh } = await readJson(res);
         if (fresh?.transcript) setCall(fresh);
@@ -46,7 +54,7 @@ export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
       }
     }, 3000);
     return () => clearInterval(timer);
-  }, [awaitingTranscript, callId]);
+  }, [awaitingTranscript, callId, apiBase]);
 
   const transcribe = async () => {
     setTranscribing(true);
@@ -109,7 +117,7 @@ export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
           {call.hasVoice && (
             <div className="voice">
               <h3>Voice message</h3>
-              <audio controls preload="none" src={`/api/calls/${call.id}/voice`} />
+              <audio controls preload="none" src={`${apiBase}/${call.id}/voice`} />
               {call.voiceDurationMs != null && (
                 <small>{(call.voiceDurationMs / 1000).toFixed(1)}s</small>
               )}
@@ -127,13 +135,15 @@ export default function CallDetail({ callId, onBack, backLabel = "calls" }) {
                   which can take a few seconds.
                 </p>
               )}
-              <button type="button" onClick={transcribe} disabled={transcribing}>
-                {transcribing
-                  ? "Transcribing..."
-                  : call.transcript
-                    ? "Transcribe again"
-                    : "Transcribe"}
-              </button>
+              {!readOnly && (
+                <button type="button" onClick={transcribe} disabled={transcribing}>
+                  {transcribing
+                    ? "Transcribing..."
+                    : call.transcript
+                      ? "Transcribe again"
+                      : "Transcribe"}
+                </button>
+              )}
               {transcribeMessage && <p className="error">{transcribeMessage}</p>}
             </div>
           )}

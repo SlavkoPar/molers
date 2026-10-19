@@ -4,7 +4,8 @@ import { formatDate, formatDuration, formatPrice } from "./format.js";
 
 const PAGE_SIZE = 25;
 
-export default function CallList({ onOpen, isOwner }) {
+// endpoint: where the list comes from (the administrator reads a chosen workspace's calls)
+export default function CallList({ onOpen, isOwner, endpoint = "/api/calls" }) {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
@@ -24,7 +25,7 @@ export default function CallList({ onOpen, isOwner }) {
     let cancelled = false;
     const params = new URLSearchParams({ limit: PAGE_SIZE, offset });
     if (query) params.set("q", query);
-    fetch(`/api/calls?${params}`)
+    fetch(`${endpoint}?${params}`)
       .then(async (res) => ({ res, body: await readJson(res) }))
       .then(({ res, body }) => {
         if (cancelled) return;
@@ -38,7 +39,7 @@ export default function CallList({ onOpen, isOwner }) {
     return () => {
       cancelled = true;
     };
-  }, [query, offset]);
+  }, [endpoint, query, offset]);
 
   const total = data?.total ?? 0;
   const from = total ? offset + 1 : 0;

@@ -383,6 +383,90 @@ def list_calls():
     return jsonify(calls=calls, total=total, limit=limit, offset=offset)
 
 
+# Administrators see every workspace and all of its calls. The default is the app's owner;
+# set ADMIN_EMAILS (comma separated) on the server to change who that is.
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in (os.environ.get("ADMIN_EMAILS") or "slavko.parezanin@gmail.com").split(",")
+    if e.strip()
+}
+
+
+def is_admin(user):
+    """An administrator is signed in with a *verified* address from ADMIN_EMAILS."""
+    return bool(
+        user
+        and (user.get("email") or "").lower() in ADMIN_EMAILS
+        and db.email_is_verified(user["id"])
+    )
+
+
+def admin_denied():
+    """None for an administrator, otherwise the error reply to send."""
+    user = session.get("user")
+    if not user:
+        return jsonify(error="Not authenticated"), 401
+    if not is_admin(user):
+        return jsonify(error="Administrators only"), 403
+    return None
+
+
+@app.get("/api/admin/workspaces")
+def admin_workspaces():
+    denied = admin_denied()
+    if denied:
+        return denied
+    return jsonify(workspaces=db.list_workspaces_admin())
+
+
+@app.get("/api/admin/workspaces/<int:workspace_id>")
+def admin_workspace(workspace_id):
+    denied = admin_denied()
+    if denied:
+        return denied
+    workspace = db.get_workspace_admin(workspace_id)
+    if not workspace:
+        return jsonify(error="Workspace not found"), 404
+    return jsonify(workspace=workspace)
+
+
+@app.get("/api/admin/workspaces/<int:workspace_id>/calls")
+def admin_workspace_calls(workspace_id):
+    denied = admin_denied()
+    if denied:
+        return denied
+    if not db.workspace_exists(workspace_id):
+        return jsonify(error="Workspace not found"), 404
+
+    limit = min(max(request.args.get("limit", 25, type=int), 1), 200)
+    offset = max(request.args.get("offset", 0, type=int), 0)
+    query = request.args.get("q", "").strip()
+    calls, total = db.list_calls(workspace_id, query, limit, offset)
+    return jsonify(calls=calls, total=total, limit=limit, offset=offset)
+
+
+@app.get("/api/admin/calls/<int:call_id>")
+def admin_call(call_id):
+    denied = admin_denied()
+    if denied:
+        return denied
+    call = db.get_call(call_id)
+    if not call:
+        return jsonify(error="Call not found"), 404
+    return jsonify(call=call)
+
+
+@app.get("/api/admin/calls/<int:call_id>/voice")
+def admin_call_voice(call_id):
+    denied = admin_denied()
+    if denied:
+        return denied
+    voice = db.get_voice(call_id)
+    if not voice:
+        return jsonify(error="No voice message"), 404
+    return Response(voice["data"], mimetype=voice["mimeType"])
+
+
 REPORT_ROW_LIMIT = 5000
 
 
@@ -718,7 +802,10 @@ def auth_email_link_verify():
 
 
 def auth_payload(user):
-    return jsonify(user=user, workspace=db.get_workspace(user["id"], user["email"]))
+    return jsonify(
+        user={**user, "isAdmin": is_admin(user)},
+        workspace=db.get_workspace(user["id"], user["email"]),
+    )
 
 
 @app.get("/api/auth/me")

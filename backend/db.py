@@ -271,6 +271,69 @@ def _email_verified(conn, user_id):
     return bool(row and row["email_verified"])
 
 
+def email_is_verified(user_id):
+    with connect() as conn:
+        return _email_verified(conn, user_id)
+
+
+def list_workspaces_admin():
+    """Every workspace with its owner and totals, for the administrator."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT w.id, w.name, u.name AS owner_name, u.email AS owner_email,
+                   (SELECT COUNT(*) FROM workspace_members m WHERE m.workspace_id = w.id)
+                       AS member_count,
+                   (SELECT COUNT(*) FROM phone_calls c WHERE c.workspace_id = w.id)
+                       AS call_count,
+                   (SELECT MAX(c.called_at) FROM phone_calls c WHERE c.workspace_id = w.id)
+                       AS last_called_at
+            FROM workspaces w LEFT JOIN users u ON u.id = w.owner_id
+            ORDER BY lower(w.name), w.id
+            """
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "ownerName": r["owner_name"],
+            "ownerEmail": r["owner_email"],
+            "memberCount": r["member_count"],
+            "callCount": r["call_count"],
+            "lastCalledAt": r["last_called_at"],
+        }
+        for r in rows
+    ]
+
+
+def get_workspace_admin(workspace_id):
+    """One workspace with its owner and member emails, or None."""
+    with connect() as conn:
+        ws = conn.execute(
+            """
+            SELECT w.id, w.name, u.name AS owner_name, u.email AS owner_email
+            FROM workspaces w LEFT JOIN users u ON u.id = w.owner_id WHERE w.id = ?
+            """,
+            (workspace_id,),
+        ).fetchone()
+        if not ws:
+            return None
+        emails = [
+            r["email"]
+            for r in conn.execute(
+                "SELECT email FROM workspace_members WHERE workspace_id = ? ORDER BY email",
+                (workspace_id,),
+            )
+        ]
+    return {
+        "id": ws["id"],
+        "name": ws["name"],
+        "ownerName": ws["owner_name"],
+        "ownerEmail": ws["owner_email"],
+        "emails": emails,
+    }
+
+
 def get_workspace(user_id, email):
     """The workspace the user owns, or else one that lists their email.
 
