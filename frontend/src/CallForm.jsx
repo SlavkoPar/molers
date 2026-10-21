@@ -83,7 +83,6 @@ const emptyFields = () => ({
   price: "",
   location: "",
   comment: "",
-  isVideo: false,
 });
 
 export default function CallForm({ workspaceName, onSaved }) {
@@ -335,11 +334,6 @@ export default function CallForm({ workspaceName, onSaved }) {
         Comment
         <textarea rows={3} value={fields.comment} onChange={set("comment")} />
       </label>
-      <label className="checkbox">
-        <input type="checkbox" checked={fields.isVideo} onChange={set("isVideo")} />
-        Video call
-      </label>
-
       <fieldset className="recorder">
         <legend>Voice message</legend>
 
